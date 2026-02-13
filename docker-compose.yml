@@ -1,0 +1,52 @@
+# Forgejo Actions Runner for FaaS deployments
+# Docker socket access allows the runner to build and deploy function containers
+#
+# Setup:
+#   1. Copy .env.example to .env and fill in your values
+#   2. Run: docker compose up -d
+#   3. Check logs: docker logs forgejo-runner
+
+services:
+  forgejo-runner:
+    image: code.forgejo.org/forgejo/runner:6
+    user: "0:0"
+    container_name: forgejo-runner
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - runner-data:/data
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - FORGEJO_INSTANCE=${FORGEJO_INSTANCE}
+      - FORGEJO_RUNNER_TOKEN=${FORGEJO_RUNNER_TOKEN}
+      - FORGEJO_RUNNER_NAME=${FORGEJO_RUNNER_NAME:-faas-runner}
+      - FORGEJO_RUNNER_LABELS=${FORGEJO_RUNNER_LABELS:-ubuntu-latest:host}
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        # Install Docker CLI, git, and Node.js (needed for host-mode builds + JS actions)
+        apk add --no-cache docker-cli git nodejs
+
+        cd /data
+        if [ ! -f .runner ]; then
+          echo "First run — registering runner with $$FORGEJO_INSTANCE..."
+          forgejo-runner register \
+            --instance "$$FORGEJO_INSTANCE" \
+            --token "$$FORGEJO_RUNNER_TOKEN" \
+            --name "$$FORGEJO_RUNNER_NAME" \
+            --labels "$$FORGEJO_RUNNER_LABELS" \
+            --no-interactive
+        else
+          echo "Runner already registered, starting daemon..."
+        fi
+        forgejo-runner daemon
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "forgejo-runner"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  runner-data:
